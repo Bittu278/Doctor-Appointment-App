@@ -16,6 +16,19 @@ A full-stack MERN application for booking and managing doctor appointments.
 - Doctor and patient dashboards
 - Responsive UI for all devices
 
+### 🆕 Enhanced Appointment System
+
+- **Zero Conflicts**: Smart booking system prevents overlapping appointments
+- **Controlled Duration**: All appointments must be 10-35 minutes
+- **Real-time Availability**: See available time slots instantly
+- **Flexible Scheduling**: Doctors can set working hours, breaks, and consultation duration
+- **Buffer Time Support**: Optional buffer between appointments (0-15 minutes)
+
+📚 **See detailed documentation:**
+- [QUICKSTART.md](./QUICKSTART.md) - Get started quickly
+- [API_DOCUMENTATION.md](./API_DOCUMENTATION.md) - Complete API reference
+- [APPOINTMENT_SYSTEM.md](./APPOINTMENT_SYSTEM.md) - System overview
+
 ## 📸 Screenshots
 
 ![Home Page](client/public/screenshot more screenshots as needed -->

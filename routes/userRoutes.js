@@ -11,7 +11,8 @@ const {
   bookingAvailabilityController,
   userAppointmentsController,
   getUserProfileController,
-  updateUserProfileController
+  updateUserProfileController,
+  getAvailableSlotsController
 } = require("../controllers/userCtrl");
 const authMiddleware = require("../middlewares/authmiddleware");
 
@@ -26,6 +27,7 @@ router.post("/delete-all-notification",authMiddleware,deleteAllNotificationContr
 router.get("/getAllDoctors",authMiddleware,getAllDoctorsControllers);
 router.post("/book-appointment",authMiddleware,bookAppointmentController);
 router.post("/booking-availability",authMiddleware,bookingAvailabilityController);
+router.get("/available-slots",authMiddleware,getAvailableSlotsController);
 router.post("/user-appointments",authMiddleware,userAppointmentsController);
 router.post('/getProfile', authMiddleware, getUserProfileController);
 router.post('/updateProfile', authMiddleware, updateUserProfileController);

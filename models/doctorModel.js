@@ -48,6 +48,26 @@ const doctorSchema = new mongoose.Schema(
       type: [String],
       required: [true, 'work timing is required']
     },
+    consultationDuration: {
+      type: Number,
+      default: 20, // Default 20 minutes per consultation
+      min: 10,
+      max: 35
+    },
+    breakTimes: {
+      type: [{
+        startTime: String,
+        endTime: String,
+        days: [String] // e.g., ["Monday", "Wednesday"]
+      }],
+      default: []
+    },
+    slotBuffer: {
+      type: Number,
+      default: 0, // Buffer time between appointments in minutes
+      min: 0,
+      max: 15
+    },
   },
   { timestamps: true }
 );

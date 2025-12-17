@@ -2,8 +2,17 @@ const userModel = require("../models/userModels");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const doctorModel = require("../models/doctorModel");
-const appointmentModel = require('../models/appointmentModel')
+const appointmentModel = require('../models/appointmentModel');
 const moment = require('moment');
+const {
+  validateDuration,
+  isSlotAvailable,
+  calculateEndTime,
+  getBreakTimesForDay,
+  validateAppointmentDate,
+  generateTimeSlots,
+  formatAppointmentResponse
+} = require('../utils/appointmentUtils');
 
 // Register callback
 const registerController = async (req, res) => {
@@ -206,67 +215,202 @@ const getAllDoctorsControllers = async(req,res)=>{
     });
   }
 }
-//BOOK APPOINTMENT
+//BOOK APPOINTMENT - Enhanced with conflict detection and duration validation
 const bookAppointmentController = async (req, res) => {
   try {
-    req.body.date = moment(req.body.date,'DD-MM-YYYY').toISOString();
-    req.body.time = moment(req.body.time,'HH:mm').toISOString();
-    req.body.status = "pending";
-    const newAppointment = new appointmentModel(req.body);
-    await newAppointment.save();
-    const user = await userModel.findOne({ _id: req.body.doctorInfo.userId });
-    user.notification.push({
-      type: "New-appointment-request",
-      message: `A new Appointment Request from ${req.body.userInfo.name}`,
-      onClickPath: "/user/appointments",
+    const { doctorId, date, startTime, duration, userId, userInfo, reason } = req.body;
+
+    // Validate required fields
+    if (!doctorId || !date || !startTime || !duration) {
+      return res.status(400).send({
+        success: false,
+        message: "Missing required fields: doctorId, date, startTime, duration"
+      });
+    }
+
+    // Validate duration (10-35 minutes)
+    if (!validateDuration(duration)) {
+      return res.status(400).send({
+        success: false,
+        message: "Appointment duration must be between 10 and 35 minutes"
+      });
+    }
+
+    // Validate date
+    const dateValidation = validateAppointmentDate(date);
+    if (!dateValidation.valid) {
+      return res.status(400).send({
+        success: false,
+        message: dateValidation.reason
+      });
+    }
+
+    // Get doctor information
+    const doctor = await doctorModel.findById(doctorId);
+    if (!doctor) {
+      return res.status(404).send({
+        success: false,
+        message: "Doctor not found"
+      });
+    }
+
+    if (doctor.status !== 'approved') {
+      return res.status(400).send({
+        success: false,
+        message: "Doctor is not approved to accept appointments"
+      });
+    }
+
+    // Calculate end time
+    const endTime = calculateEndTime(startTime, duration);
+
+    // Get existing appointments for this doctor on this date
+    const existingAppointments = await appointmentModel.find({
+      doctorId,
+      date,
+      status: { $in: ['pending', 'approved'] }
     });
-    await user.save();
-    res.status(200).send({
+
+    // Get break times for the specific day
+    const breakTimes = getBreakTimesForDay(doctor.breakTimes || [], date);
+
+    // Check if slot is available
+    const availability = isSlotAvailable(
+      startTime,
+      endTime,
+      existingAppointments,
+      doctor.timings,
+      breakTimes
+    );
+
+    if (!availability.available) {
+      return res.status(409).send({
+        success: false,
+        message: availability.reason
+      });
+    }
+
+    // Create appointment
+    const appointmentData = {
+      userId,
+      doctorId,
+      doctorInfo: {
+        firstName: doctor.firstName,
+        lastName: doctor.lastName,
+        specialization: doctor.specialization,
+        feesPerConsultation: doctor.feesPerConsultation,
+        userId: doctor.userId
+      },
+      userInfo,
+      date,
+      startTime,
+      endTime,
+      duration,
+      reason: reason || '',
+      status: "pending"
+    };
+
+    const newAppointment = new appointmentModel(appointmentData);
+    await newAppointment.save();
+
+    // Notify doctor
+    const doctorUser = await userModel.findOne({ _id: doctor.userId });
+    if (doctorUser) {
+      doctorUser.notification.push({
+        type: "New-appointment-request",
+        message: `New appointment request from ${userInfo.name} on ${date} at ${startTime}`,
+        onClickPath: "/doctor/appointments",
+      });
+      await doctorUser.save();
+    }
+
+    res.status(201).send({
       success: true,
-      message: "Appointment Book succesfully",
+      message: "Appointment booked successfully",
+      data: formatAppointmentResponse(newAppointment)
     });
   } catch (error) {
-    console.log(error);
+    console.error('Booking error:', error);
     res.status(500).send({
       success: false,
-      error,
-      message: "Error While Booking Appointment",
+      message: "Error while booking appointment",
+      error: error.message
     });
   }
 };
 
-// booking bookingAvailabilityController
+// Check booking availability - Enhanced version
 const bookingAvailabilityController = async (req, res) => {
   try {
-    const date = moment(req.body.date, "DD-MM-YYYY").toISOString();
-    const fromTime = moment(req.body.time, "HH:mm").subtract(1, "hours").toISOString();
-    const toTime = moment(req.body.time, "HH:mm").add(1, "hours").toISOString();
-    const doctorId = req.body.doctorId;
-    const appointments = await appointmentModel.find({
-      doctorId,
-      date,
-      time: {
-        $gte: fromTime,
-        $lte: toTime,
-      },
-    });
-    if (appointments.length > 0) {
-      return res.status(200).send({
-        message: "Appointments not available at this time",
-        success: false, // <-- fix here
-      });
-    } else {
-      return res.status(200).send({
-        success: true,
-        message: "Appointments available",
+    const { doctorId, date, startTime, duration } = req.body;
+
+    if (!doctorId || !date || !startTime || !duration) {
+      return res.status(400).send({
+        success: false,
+        message: "Missing required fields: doctorId, date, startTime, duration"
       });
     }
+
+    // Validate duration
+    if (!validateDuration(duration)) {
+      return res.status(400).send({
+        success: false,
+        message: "Duration must be between 10 and 35 minutes"
+      });
+    }
+
+    // Validate date
+    const dateValidation = validateAppointmentDate(date);
+    if (!dateValidation.valid) {
+      return res.status(400).send({
+        success: false,
+        message: dateValidation.reason
+      });
+    }
+
+    // Get doctor
+    const doctor = await doctorModel.findById(doctorId);
+    if (!doctor) {
+      return res.status(404).send({
+        success: false,
+        message: "Doctor not found"
+      });
+    }
+
+    // Calculate end time
+    const endTime = calculateEndTime(startTime, duration);
+
+    // Get existing appointments
+    const existingAppointments = await appointmentModel.find({
+      doctorId,
+      date,
+      status: { $in: ['pending', 'approved'] }
+    });
+
+    // Get break times for the day
+    const breakTimes = getBreakTimesForDay(doctor.breakTimes || [], date);
+
+    // Check availability
+    const availability = isSlotAvailable(
+      startTime,
+      endTime,
+      existingAppointments,
+      doctor.timings,
+      breakTimes
+    );
+
+    res.status(200).send({
+      success: availability.available,
+      message: availability.reason,
+      available: availability.available,
+      slot: availability.available ? { startTime, endTime, duration } : null
+    });
   } catch (error) {
-    console.log(error);
+    console.error('Availability check error:', error);
     res.status(500).send({
       success: false,
-      error,
-      message: "Error In Booking",
+      message: "Error checking availability",
+      error: error.message
     });
   }
 };
@@ -314,6 +458,89 @@ const updateUserProfileController = async (req, res) => {
   }
 };
 
+// Get Available Time Slots for a Doctor on a Specific Date
+const getAvailableSlotsController = async (req, res) => {
+  try {
+    const { doctorId, date } = req.query;
+
+    if (!doctorId || !date) {
+      return res.status(400).send({
+        success: false,
+        message: "Missing required parameters: doctorId, date"
+      });
+    }
+
+    // Validate date
+    const dateValidation = validateAppointmentDate(date);
+    if (!dateValidation.valid) {
+      return res.status(400).send({
+        success: false,
+        message: dateValidation.reason
+      });
+    }
+
+    // Get doctor
+    const doctor = await doctorModel.findById(doctorId);
+    if (!doctor) {
+      return res.status(404).send({
+        success: false,
+        message: "Doctor not found"
+      });
+    }
+
+    if (doctor.status !== 'approved') {
+      return res.status(400).send({
+        success: false,
+        message: "Doctor is not accepting appointments"
+      });
+    }
+
+    // Get existing appointments for this date
+    const existingAppointments = await appointmentModel.find({
+      doctorId,
+      date,
+      status: { $in: ['pending', 'approved'] }
+    });
+
+    // Get break times for the specific day
+    const breakTimes = getBreakTimesForDay(doctor.breakTimes || [], date);
+
+    // Generate available slots
+    const consultationDuration = doctor.consultationDuration || 20;
+    const slotBuffer = doctor.slotBuffer || 0;
+    
+    const availableSlots = generateTimeSlots(
+      doctor.timings,
+      existingAppointments,
+      consultationDuration,
+      breakTimes,
+      slotBuffer
+    );
+
+    res.status(200).send({
+      success: true,
+      message: "Available slots fetched successfully",
+      data: {
+        doctorName: `${doctor.firstName} ${doctor.lastName}`,
+        specialization: doctor.specialization,
+        date,
+        consultationDuration,
+        totalSlots: availableSlots.length,
+        slots: availableSlots,
+        workingHours: doctor.timings,
+        breakTimes
+      }
+    });
+  } catch (error) {
+    console.error('Get slots error:', error);
+    res.status(500).send({
+      success: false,
+      message: "Error fetching available slots",
+      error: error.message
+    });
+  }
+};
+
 
 module.exports = { 
   loginController, 
@@ -328,4 +555,5 @@ module.exports = {
   userAppointmentsController,
   getUserProfileController,
   updateUserProfileController,
+  getAvailableSlotsController,
 };
